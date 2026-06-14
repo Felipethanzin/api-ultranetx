@@ -109,11 +109,7 @@ async function criarTabelas() {
         );
     `);
 }
-if (erro.code === "23505") {
-    return res.status(409).json({
-        erro: "Esse nome de usuário já está sendo usado por outra pessoa."
-    });
-}
+
 function senhaForte(senha) {
     return (
         typeof senha === "string" &&
@@ -261,9 +257,21 @@ app.post("/api/auth/enviar-codigo", authLimiter, async (req, res) => {
             [email]
         );
 
-        if (existe.rows.length > 0) {
-            return res.status(409).json({ erro: "Este e-mail já está cadastrado." });
-        }
+ if (existe.rows.length > 0) {
+    const usuarioExistente = existe.rows[0];
+
+    if (usuarioExistente.email === email) {
+        return res.status(409).json({
+            erro: "Este e-mail já está cadastrado."
+        });
+    }
+
+    if (usuarioExistente.nome === nome) {
+        return res.status(409).json({
+            erro: "Esse nome de usuário já está sendo usado por outra pessoa."
+        });
+    }
+}
 
         const codigo = crypto.randomInt(100000, 999999).toString();
 
