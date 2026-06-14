@@ -18,7 +18,7 @@ const app = express();
 
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET;
-const API_URL = "https://api-ultranetx.onrender.com";
+const API_URL = process.env.API_URL || "https://api-ultranetx.onrender.com";
 
 if (!JWT_SECRET) {
     console.error("JWT_SECRET não configurado no .env");
@@ -66,12 +66,16 @@ app.use("/uploads", express.static(uploadDir));
 const limiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 100,
+    standardHeaders: true,
+    legacyHeaders: false,
     message: { erro: "Muitas tentativas. Tente novamente depois." }
 });
 
 const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 50,
+    standardHeaders: true,
+    legacyHeaders: false,
     message: { erro: "Muitas tentativas. Aguarde alguns minutos e tente novamente." }
 });
 
@@ -103,6 +107,20 @@ const upload = multer({
         cb(null, true);
     }
 });
+
+async function criarTabelas() {
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS usuarios (
+            id SERIAL PRIMARY KEY,
+            nome VARCHAR(20) UNIQUE NOT NULL,
+            email TEXT UNIQUE NOT NULL,
+            senha_hash TEXT NOT NULL,
+            nascimento DATE NOT NULL,
+            foto_url TEXT,
+            criado_em TIMESTAMP DEFAULT NOW()
+        );
+    `);
+}
 
 function senhaForte(senha) {
     return (
@@ -172,8 +190,6 @@ app.get("/api/auth/check-email", async (req, res) => {
     try {
         const email = String(req.query.email || "").trim().toLowerCase();
 
-        console.log("CHECK EMAIL RECEBIDO:", email);
-
         if (!email || !validator.isEmail(email)) {
             return res.status(400).json({ erro: "E-mail inválido." });
         }
@@ -188,13 +204,8 @@ app.get("/api/auth/check-email", async (req, res) => {
         });
 
     } catch (error) {
-        console.error("ERRO CHECK EMAIL REAL:", error);
-
-        return res.status(500).json({
-            erro: error.message,
-            codigo: error.code,
-            detalhe: error.detail || null
-        });
+        console.error("ERRO CHECK EMAIL:", error);
+        return res.status(500).json({ erro: "Erro ao verificar e-mail." });
     }
 });
 
@@ -241,7 +252,7 @@ app.post("/api/auth/enviar-codigo", authLimiter, async (req, res) => {
         return res.json({ mensagem: "Código enviado com sucesso." });
 
     } catch (error) {
-        console.log("ERRO AO ENVIAR CÓDIGO:", error);
+        console.error("ERRO AO ENVIAR CÓDIGO:", error);
         return res.status(500).json({ erro: "Erro interno ao enviar código." });
     }
 });
@@ -352,10 +363,14 @@ app.post("/api/auth/cadastro", authLimiter, upload.single("foto"), async (req, r
         });
 
     } catch (error) {
-        console.log("ERRO CADASTRO:", error);
+        console.error("ERRO CADASTRO:", error);
 
         if (req.file) {
             fs.unlink(req.file.path, () => {});
+        }
+
+        if (error.code === "23505") {
+            return res.status(409).json({ erro: "E-mail ou nome de usuário já cadastrado." });
         }
 
         return res.status(500).json({ erro: "Erro interno ao cadastrar usuário." });
@@ -408,7 +423,7 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
         });
 
     } catch (error) {
-        console.log("ERRO LOGIN:", error);
+        console.error("ERRO LOGIN:", error);
         return res.status(500).json({ erro: "Erro interno ao fazer login." });
     }
 });
@@ -427,7 +442,7 @@ app.get("/api/me", autenticarToken, async (req, res) => {
         return res.json({ usuario: result.rows[0] });
 
     } catch (error) {
-        console.log("ERRO ME:", error);
+        console.error("ERRO ME:", error);
         return res.status(500).json({ erro: "Erro ao buscar perfil." });
     }
 });
@@ -445,7 +460,7 @@ app.use((error, req, res, next) => {
         return res.status(400).json({ erro: error.message });
     }
 
-    console.log("ERRO GLOBAL:", error);
+    console.error("ERRO GLOBAL:", error);
     return res.status(500).json({ erro: "Erro interno no servidor." });
 });
 
@@ -460,6 +475,9 @@ app.listen(PORT, async () => {
     try {
         await pool.query("SELECT NOW()");
         console.log("PostgreSQL conectado com sucesso.");
+
+        await criarTabelas();
+        console.log("Tabela usuarios pronta.");
 
         await transporter.verify();
         console.log("Gmail conectado com sucesso.");
