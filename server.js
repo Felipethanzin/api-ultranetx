@@ -252,10 +252,10 @@ app.post("/api/auth/enviar-codigo", authLimiter, async (req, res) => {
             return res.status(400).json({ erro: "E-mail inválido." });
         }
 
-        const existe = await pool.query(
-            "SELECT id FROM usuarios WHERE email = $1",
-            [email]
-        );
+const existe = await pool.query(
+    "SELECT email, nome FROM usuarios WHERE email = $1 OR nome = $2",
+    [email, nome]
+);
 
  if (existe.rows.length > 0) {
     const usuarioExistente = existe.rows[0];
