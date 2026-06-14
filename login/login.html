@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login | UltraNetX</title>
+
+    <link rel="stylesheet" href="../css/login.css">
+</head>
+
+<body>
+
+    <main class="login-page">
+
+        <section class="info">
+            <div class="logo">
+                <div class="logo-icon">X</div>
+                <span>UltraNetX</span>
+            </div>
+
+            <h1>Entre na sua rede social.</h1>
+
+            <p>
+                Acesse sua conta para publicar, conversar, seguir pessoas
+                e participar de comunidades dentro da UltraNetX.
+            </p>
+
+            <div class="features">
+                <div class="feature">Feed moderno</div>
+                <div class="feature">Mensagens</div>
+                <div class="feature">Comunidades</div>
+                <div class="feature">Perfis</div>
+            </div>
+        </section>
+
+        <section class="login-card">
+            <h2>Login</h2>
+            <p>Digite seu e-mail e senha para continuar.</p>
+
+            <div id="message" class="message"></div>
+
+            <form id="loginForm">
+                <div class="input-group">
+                    <label for="email">E-mail</label>
+                    <div class="input-box">
+                        <input type="email" id="email" placeholder="seuemail@exemplo.com" autocomplete="email" required>
+                        <span class="input-icon">✉</span>
+                    </div>
+                </div>
+
+                <div class="input-group">
+                    <label for="senha">Senha</label>
+                    <div class="input-box">
+                        <input type="password" id="senha" placeholder="Digite sua senha" autocomplete="current-password"
+                            required>
+                        <button type="button" class="toggle-password" onclick="toggleSenha()">👁</button>
+                    </div>
+                </div>
+
+                <div class="options">
+                    <label>
+                        <input type="checkbox" id="lembrar">
+                        Lembrar e-mail
+                    </label>
+
+                    <a href="#">Esqueci a senha</a>
+                </div>
+
+                <button type="submit" class="btn-login" id="btnLogin">Entrar</button>
+            </form>
+
+            <div class="register">
+                Não tem conta? <a href="../cadastro/cadastro.html">Criar conta</a>
+            </div>
+
+            <a href="../index.html" class="back">Voltar para o início</a>
+        </section>
+
+    </main>
+    <script>
+        const API_URL = "https://api-ultranetx.onrender.com";
+
+        const form = document.getElementById("loginForm");
+        const emailInput = document.getElementById("email");
+        const senhaInput = document.getElementById("senha");
+        const btnLogin = document.getElementById("btnLogin");
+        const message = document.getElementById("message");
+        const lembrar = document.getElementById("lembrar");
+
+        const emailSalvo = localStorage.getItem("emailSalvo");
+
+        if (emailSalvo) {
+            emailInput.value = emailSalvo;
+            lembrar.checked = true;
+        }
+
+        function mostrarMensagem(texto, tipo = "error") {
+            message.textContent = texto;
+            message.className = `message ${tipo}`;
+        }
+
+        function limparMensagem() {
+            message.textContent = "";
+            message.className = "message";
+        }
+
+        function validarEmail(email) {
+            return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+        }
+
+        function toggleSenha() {
+            senhaInput.type = senhaInput.type === "password" ? "text" : "password";
+        }
+
+        form.addEventListener("submit", async (e) => {
+            e.preventDefault();
+
+            limparMensagem();
+
+            const email = emailInput.value.trim().toLowerCase();
+            const senha = senhaInput.value;
+
+            if (!email || !senha) {
+                mostrarMensagem("Preencha todos os campos.");
+                return;
+            }
+
+            if (!validarEmail(email)) {
+                mostrarMensagem("Digite um e-mail válido.");
+                return;
+            }
+
+            try {
+                btnLogin.disabled = true;
+                btnLogin.textContent = "Entrando...";
+
+                const resposta = await fetch(`${API_URL}/api/auth/login`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({ email, senha })
+                });
+
+                const dados = await resposta.json();
+
+                if (!resposta.ok) {
+                    mostrarMensagem(dados.erro || "E-mail ou senha incorretos.");
+                    btnLogin.disabled = false;
+                    btnLogin.textContent = "Entrar";
+                    return;
+                }
+
+                if (lembrar.checked) {
+                    localStorage.setItem("emailSalvo", email);
+                } else {
+                    localStorage.removeItem("emailSalvo");
+                }
+
+                localStorage.setItem("token", dados.token);
+                localStorage.setItem("usuario", JSON.stringify(dados.usuario));
+
+                mostrarMensagem("Login realizado com sucesso. Redirecionando...", "success");
+
+                setTimeout(() => {
+                    window.location.href = "../index.html";
+                }, 1000);
+
+            } catch (error) {
+                mostrarMensagem("Erro ao conectar com a API.", "error");
+
+                btnLogin.disabled = false;
+                btnLogin.textContent = "Entrar";
+            }
+        });
+    </script>
+
+</body>
+
+</html>
