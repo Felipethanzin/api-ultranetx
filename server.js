@@ -66,6 +66,25 @@ app.use(cors({
     credentials: true
 }));
 
+app.get("/teste-email", async (req, res) => {
+    try {
+        await transporter.verify();
+
+        res.json({
+            sucesso: true,
+            smtp: process.env.SMTP_HOST,
+            user: process.env.SMTP_USER,
+            from: process.env.EMAIL_FROM
+        });
+
+    } catch (error) {
+        res.status(500).json({
+            erro: error.message,
+            codigo: error.code || null
+        });
+    }
+});
+
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
 app.use("/uploads", express.static(uploadDir));
