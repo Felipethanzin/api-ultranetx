@@ -31,16 +31,16 @@ if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
 }
 
 const transporter = nodemailer.createTransport({
-    host: "smtp.gmail.com",
-    port: 465,
-    secure: true,
+    host: process.env.SMTP_HOST,
+    port: Number(process.env.SMTP_PORT || 587),
+    secure: false,
     auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS
     },
-    connectionTimeout: 20000,
-    greetingTimeout: 20000,
-    socketTimeout: 20000
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 15000
 });
 
 const codigosEmail = {};
@@ -235,19 +235,38 @@ app.post("/api/auth/enviar-codigo", authLimiter, async (req, res) => {
             expira: Date.now() + 10 * 60 * 1000
         };
 
-        await enviarEmailComTimeout({
-            from: `"UltraNetX" <${process.env.EMAIL_USER}>`,
-            to: email,
-            subject: "Código de verificação - UltraNetX",
-            html: `
-                <div style="font-family: Arial, sans-serif; padding: 20px;">
-                    <h2>UltraNetX</h2>
-                    <p>Seu código de verificação é:</p>
-                    <h1 style="font-size: 36px; letter-spacing: 4px;">${codigo}</h1>
-                    <p>Esse código expira em 10 minutos.</p>
+await enviarEmailComTimeout({
+    from: `"UltraNetX" <${process.env.EMAIL_FROM}>`,
+    to: email,
+    subject: "Código de verificação - UltraNetX",
+    html: `
+        <div style="font-family: Arial, sans-serif; background: #f4f7fb; padding: 30px;">
+            <div style="max-width: 500px; margin: auto; background: #ffffff; padding: 30px; border-radius: 12px; text-align: center;">
+                
+                <h2 style="color: #2563eb; margin-bottom: 10px;">
+                    UltraNetX
+                </h2>
+
+                <p style="color: #333;">
+                    Seu código de verificação é:
+                </p>
+
+                <div style="font-size: 36px; font-weight: bold; letter-spacing: 6px; color: #111827; margin: 25px 0;">
+                    ${codigo}
                 </div>
-            `
-        });
+
+                <p style="color: #555; font-size: 14px;">
+                    Esse código expira em 10 minutos.
+                </p>
+
+                <p style="color: #777; font-size: 12px; margin-top: 25px;">
+                    Se você não pediu esse código, ignore este e-mail.
+                </p>
+
+            </div>
+        </div>
+    `
+});
 
         return res.json({ mensagem: "Código enviado com sucesso." });
 
