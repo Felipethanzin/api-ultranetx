@@ -109,7 +109,11 @@ async function criarTabelas() {
         );
     `);
 }
-
+if (erro.code === "23505") {
+    return res.status(409).json({
+        erro: "Esse nome de usuário já está sendo usado por outra pessoa."
+    });
+}
 function senhaForte(senha) {
     return (
         typeof senha === "string" &&
