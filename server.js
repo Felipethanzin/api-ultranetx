@@ -17,16 +17,16 @@ const pool = require("./db");
 const app = express();
 
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET;
 const API_URL = process.env.API_URL || "https://api-ultranetx.onrender.com";
+const JWT_SECRET = process.env.JWT_SECRET;
 
 if (!JWT_SECRET) {
-    console.error("JWT_SECRET não configurado no .env");
+    console.error("JWT_SECRET não configurado.");
     process.exit(1);
 }
 
 if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-    console.error("EMAIL_USER ou EMAIL_PASS não configurado no .env");
+    console.error("EMAIL_USER ou EMAIL_PASS não configurado.");
     process.exit(1);
 }
 
@@ -35,11 +35,13 @@ const transporter = nodemailer.createTransport({
     auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS
-    }
+    },
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 10000
 });
 
 const codigosEmail = {};
-
 const uploadDir = path.join(__dirname, "uploads");
 
 if (!fs.existsSync(uploadDir)) {
@@ -63,44 +65,37 @@ app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
 app.use("/uploads", express.static(uploadDir));
 
-const limiter = rateLimit({
+app.use(rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 100,
+    max: 200,
     standardHeaders: true,
     legacyHeaders: false,
     message: { erro: "Muitas tentativas. Tente novamente depois." }
-});
+}));
 
 const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 50,
+    max: 80,
     standardHeaders: true,
     legacyHeaders: false,
-    message: { erro: "Muitas tentativas. Aguarde alguns minutos e tente novamente." }
-});
-
-app.use(limiter);
-
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        cb(null, uploadDir);
-    },
-    filename: (req, file, cb) => {
-        const ext = path.extname(file.originalname).toLowerCase();
-        const nomeSeguro = `${Date.now()}-${crypto.randomBytes(8).toString("hex")}${ext}`;
-        cb(null, nomeSeguro);
-    }
+    message: { erro: "Muitas tentativas. Aguarde alguns minutos." }
 });
 
 const upload = multer({
-    storage,
+    storage: multer.diskStorage({
+        destination: (req, file, cb) => cb(null, uploadDir),
+        filename: (req, file, cb) => {
+            const ext = path.extname(file.originalname).toLowerCase();
+            cb(null, `${Date.now()}-${crypto.randomBytes(8).toString("hex")}${ext}`);
+        }
+    }),
     limits: {
         fileSize: 2 * 1024 * 1024
     },
     fileFilter: (req, file, cb) => {
-        const tiposPermitidos = ["image/jpeg", "image/png", "image/webp"];
+        const permitidos = ["image/jpeg", "image/png", "image/webp"];
 
-        if (!tiposPermitidos.includes(file.mimetype)) {
+        if (!permitidos.includes(file.mimetype)) {
             return cb(new Error("Formato inválido. Use JPG, PNG ou WEBP."));
         }
 
@@ -135,10 +130,10 @@ function senhaForte(senha) {
 
 function idadeValida(dataNascimento) {
     const nascimento = new Date(dataNascimento);
-    const hoje = new Date();
 
     if (isNaN(nascimento.getTime())) return false;
 
+    const hoje = new Date();
     let idade = hoje.getFullYear() - nascimento.getFullYear();
     const mes = hoje.getMonth() - nascimento.getMonth();
 
@@ -168,15 +163,21 @@ function autenticarToken(req, res, next) {
         return res.status(401).json({ erro: "Token não enviado ou inválido." });
     }
 
-    const token = authHeader.split(" ")[1];
-
     try {
-        const dados = jwt.verify(token, JWT_SECRET);
-        req.usuario = dados;
+        req.usuario = jwt.verify(authHeader.split(" ")[1], JWT_SECRET);
         next();
     } catch {
         return res.status(401).json({ erro: "Token expirado ou inválido." });
     }
+}
+
+function enviarEmailComTimeout(opcoes) {
+    return Promise.race([
+        transporter.sendMail(opcoes),
+        new Promise((_, reject) => {
+            setTimeout(() => reject(new Error("Tempo limite ao enviar e-mail.")), 15000);
+        })
+    ]);
 }
 
 app.get("/", (req, res) => {
@@ -199,9 +200,7 @@ app.get("/api/auth/check-email", async (req, res) => {
             [email]
         );
 
-        return res.json({
-            disponivel: result.rows.length === 0
-        });
+        return res.json({ disponivel: result.rows.length === 0 });
 
     } catch (error) {
         console.error("ERRO CHECK EMAIL:", error);
@@ -234,7 +233,7 @@ app.post("/api/auth/enviar-codigo", authLimiter, async (req, res) => {
             expira: Date.now() + 10 * 60 * 1000
         };
 
-        await transporter.sendMail({
+        await enviarEmailComTimeout({
             from: `"UltraNetX" <${process.env.EMAIL_USER}>`,
             to: email,
             subject: "Código de verificação - UltraNetX",
@@ -244,7 +243,6 @@ app.post("/api/auth/enviar-codigo", authLimiter, async (req, res) => {
                     <p>Seu código de verificação é:</p>
                     <h1 style="font-size: 36px; letter-spacing: 4px;">${codigo}</h1>
                     <p>Esse código expira em 10 minutos.</p>
-                    <p>Se você não pediu esse código, ignore este e-mail.</p>
                 </div>
             `
         });
@@ -253,7 +251,10 @@ app.post("/api/auth/enviar-codigo", authLimiter, async (req, res) => {
 
     } catch (error) {
         console.error("ERRO AO ENVIAR CÓDIGO:", error);
-        return res.status(500).json({ erro: "Erro interno ao enviar código." });
+
+        return res.status(500).json({
+            erro: error.message || "Erro interno ao enviar código."
+        });
     }
 });
 
@@ -304,23 +305,21 @@ app.post("/api/auth/cadastro", authLimiter, upload.single("foto"), async (req, r
             return res.status(400).json({ erro: "E-mail inválido." });
         }
 
-        const codigoInfo = codigosEmail[email];
-
-        if (!codigoInfo || !codigoInfo.verificado) {
+        if (!codigosEmail[email] || !codigosEmail[email].verificado) {
             return res.status(400).json({
-                erro: "Você precisa verificar o código enviado ao e-mail antes de cadastrar."
+                erro: "Você precisa verificar o e-mail antes de cadastrar."
             });
         }
 
         if (!/^[a-zA-Z0-9._]{3,20}$/.test(nome)) {
             return res.status(400).json({
-                erro: "Nome deve ter 3 a 20 caracteres e usar apenas letras, números, ponto ou underline."
+                erro: "Nome deve ter 3 a 20 caracteres."
             });
         }
 
         if (!senhaForte(senha)) {
             return res.status(400).json({
-                erro: "Senha fraca. Use mínimo 8 caracteres, maiúscula, minúscula, número e especial."
+                erro: "Senha fraca. Use maiúscula, minúscula, número e caractere especial."
             });
         }
 
@@ -334,14 +333,11 @@ app.post("/api/auth/cadastro", authLimiter, upload.single("foto"), async (req, r
         );
 
         if (existe.rows.length > 0) {
-            return res.status(409).json({ erro: "E-mail ou nome de usuário já cadastrado." });
+            return res.status(409).json({ erro: "E-mail ou nome já cadastrado." });
         }
 
         const senhaHash = await bcrypt.hash(senha, 12);
-
-        const fotoUrl = req.file
-            ? `${API_URL}/uploads/${req.file.filename}`
-            : null;
+        const fotoUrl = req.file ? `${API_URL}/uploads/${req.file.filename}` : null;
 
         const novoUsuario = await pool.query(
             `INSERT INTO usuarios 
@@ -354,11 +350,10 @@ app.post("/api/auth/cadastro", authLimiter, upload.single("foto"), async (req, r
         delete codigosEmail[email];
 
         const usuario = novoUsuario.rows[0];
-        const token = gerarToken(usuario);
 
         return res.status(201).json({
             mensagem: "Cadastro realizado com sucesso.",
-            token,
+            token: gerarToken(usuario),
             usuario
         });
 
@@ -366,11 +361,11 @@ app.post("/api/auth/cadastro", authLimiter, upload.single("foto"), async (req, r
         console.error("ERRO CADASTRO:", error);
 
         if (req.file) {
-            fs.unlink(req.file.path, () => { });
+            fs.unlink(req.file.path, () => {});
         }
 
         if (error.code === "23505") {
-            return res.status(409).json({ erro: "E-mail ou nome de usuário já cadastrado." });
+            return res.status(409).json({ erro: "E-mail ou nome já cadastrado." });
         }
 
         return res.status(500).json({ erro: "Erro interno ao cadastrar usuário." });
@@ -400,18 +395,15 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
         }
 
         const usuario = result.rows[0];
-
         const senhaCorreta = await bcrypt.compare(senha, usuario.senha_hash);
 
         if (!senhaCorreta) {
             return res.status(401).json({ erro: "E-mail ou senha incorretos." });
         }
 
-        const token = gerarToken(usuario);
-
         return res.json({
             mensagem: "Login realizado com sucesso.",
-            token,
+            token: gerarToken(usuario),
             usuario: {
                 id: usuario.id,
                 nome: usuario.nome,
@@ -460,25 +452,7 @@ app.use((error, req, res, next) => {
         return res.status(400).json({ erro: error.message });
     }
 
-    console.error("ERRO GLOBAL:", error);
     return res.status(500).json({ erro: "Erro interno no servidor." });
-});
-
-app.get("/teste-email", async (req, res) => {
-    try {
-        await transporter.verify();
-
-        res.json({
-            sucesso: true,
-            email: process.env.EMAIL_USER
-        });
-
-    } catch (error) {
-        res.status(500).json({
-            erro: error.message,
-            codigo: error.code || null
-        });
-    }
 });
 
 app.use((req, res) => {
@@ -486,20 +460,13 @@ app.use((req, res) => {
 });
 
 app.listen(PORT, async () => {
-    console.log(`API rodando em http://localhost:${PORT}`);
-    console.log(`API pública: ${API_URL}`);
+    console.log(`API rodando na porta ${PORT}`);
 
     try {
         await pool.query("SELECT NOW()");
-        console.log("PostgreSQL conectado com sucesso.");
-
         await criarTabelas();
-        console.log("Tabela usuarios pronta.");
-
-        await transporter.verify();
-        console.log("Gmail conectado com sucesso.");
+        console.log("PostgreSQL conectado e tabela pronta.");
     } catch (error) {
-        console.error("Erro ao iniciar serviços:");
-        console.error(error);
+        console.error("Erro ao iniciar banco:", error);
     }
 });
