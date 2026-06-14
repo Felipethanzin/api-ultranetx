@@ -11,14 +11,6 @@ const path = require("path");
 const fs = require("fs");
 const validator = require("validator");
 const crypto = require("crypto");
-const brevo = require("@getbrevo/brevo");
-
-const brevoClient = new brevo.TransactionalEmailsApi();
-
-brevoClient.setApiKey(
-    brevo.TransactionalEmailsApiApiKeys.apiKey,
-    process.env.BREVO_API_KEY
-);;
 const pool = require("./db");
 
 const app = express();
@@ -34,24 +26,10 @@ if (!JWT_SECRET) {
     process.exit(1);
 }
 
-if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS || !process.env.EMAIL_FROM) {
-    console.error("SMTP_HOST, SMTP_USER, SMTP_PASS ou EMAIL_FROM não configurado.");
+if (!process.env.BREVO_API_KEY || !process.env.EMAIL_FROM) {
+    console.error("BREVO_API_KEY ou EMAIL_FROM não configurado.");
     process.exit(1);
 }
-
-const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT || 587),
-    secure: false,
-    requireTLS: true,
-    auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS
-    },
-    connectionTimeout: 30000,
-    greetingTimeout: 30000,
-    socketTimeout: 30000
-});
 
 const codigosEmail = {};
 const uploadDir = path.join(__dirname, "uploads");
@@ -72,25 +50,6 @@ app.use(cors({
     ],
     credentials: true
 }));
-
-app.get("/teste-email", async (req, res) => {
-    try {
-        await transporter.verify();
-
-        res.json({
-            sucesso: true,
-            smtp: process.env.SMTP_HOST,
-            user: process.env.SMTP_USER,
-            from: process.env.EMAIL_FROM
-        });
-
-    } catch (error) {
-        res.status(500).json({
-            erro: error.message,
-            codigo: error.code || null
-        });
-    }
-});
 
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
@@ -202,13 +161,56 @@ function autenticarToken(req, res, next) {
     }
 }
 
-function enviarEmailComTimeout(opcoes) {
-    return Promise.race([
-        transporter.sendMail(opcoes),
-        new Promise((_, reject) => {
-            setTimeout(() => reject(new Error("Tempo limite ao enviar e-mail.")), 30000);
+async function enviarEmailBrevo(email, codigo) {
+    const resposta = await fetch("https://api.brevo.com/v3/smtp/email", {
+        method: "POST",
+        headers: {
+            "accept": "application/json",
+            "api-key": process.env.BREVO_API_KEY,
+            "content-type": "application/json"
+        },
+        body: JSON.stringify({
+            sender: {
+                name: "UltraNetX",
+                email: process.env.EMAIL_FROM
+            },
+            to: [
+                {
+                    email
+                }
+            ],
+            subject: "Código de verificação - UltraNetX",
+            htmlContent: `
+                <div style="font-family: Arial, sans-serif; background: #f4f7fb; padding: 30px;">
+                    <div style="max-width: 500px; margin: auto; background: #ffffff; padding: 30px; border-radius: 12px; text-align: center;">
+                        <h2 style="color: #2563eb; margin-bottom: 10px;">UltraNetX</h2>
+
+                        <p style="color: #333;">Seu código de verificação é:</p>
+
+                        <div style="font-size: 36px; font-weight: bold; letter-spacing: 6px; color: #111827; margin: 25px 0;">
+                            ${codigo}
+                        </div>
+
+                        <p style="color: #555; font-size: 14px;">
+                            Esse código expira em 10 minutos.
+                        </p>
+
+                        <p style="color: #777; font-size: 12px; margin-top: 25px;">
+                            Se você não pediu esse código, ignore este e-mail.
+                        </p>
+                    </div>
+                </div>
+            `
         })
-    ]);
+    });
+
+    const dados = await resposta.json().catch(() => ({}));
+
+    if (!resposta.ok) {
+        throw new Error(dados.message || dados.error || "Erro ao enviar e-mail pela Brevo.");
+    }
+
+    return dados;
 }
 
 app.get("/", (req, res) => {
@@ -264,30 +266,7 @@ app.post("/api/auth/enviar-codigo", authLimiter, async (req, res) => {
             expira: Date.now() + 10 * 60 * 1000
         };
 
-        await brevoClient.sendTransacEmail({
-            sender: {
-                name: "UltraNetX",
-                email: process.env.EMAIL_FROM
-            },
-            to: [
-                {
-                    email: email
-                }
-            ],
-            subject: "Código de verificação - UltraNetX",
-            htmlContent: `
-        <div style="font-family: Arial, sans-serif; background: #f4f7fb; padding: 30px;">
-            <div style="max-width: 500px; margin: auto; background: #ffffff; padding: 30px; border-radius: 12px; text-align: center;">
-                <h2 style="color: #2563eb;">UltraNetX</h2>
-                <p>Seu código de verificação é:</p>
-                <div style="font-size: 36px; font-weight: bold; letter-spacing: 6px; color: #111827; margin: 25px 0;">
-                    ${codigo}
-                </div>
-                <p>Esse código expira em 10 minutos.</p>
-            </div>
-        </div>
-    `
-        });24
+        await enviarEmailBrevo(email, codigo);
 
         return res.json({ mensagem: "Código enviado com sucesso." });
 
@@ -295,9 +274,7 @@ app.post("/api/auth/enviar-codigo", authLimiter, async (req, res) => {
         console.error("ERRO AO ENVIAR CÓDIGO:", error);
 
         return res.status(500).json({
-            erro: error.message || "Erro interno ao enviar código.",
-            codigo: error.code || null,
-            resposta: error.response || null
+            erro: error.message || "Erro interno ao enviar código."
         });
     }
 });
@@ -405,7 +382,7 @@ app.post("/api/auth/cadastro", authLimiter, upload.single("foto"), async (req, r
         console.error("ERRO CADASTRO:", error);
 
         if (req.file) {
-            fs.unlink(req.file.path, () => { });
+            fs.unlink(req.file.path, () => {});
         }
 
         if (error.code === "23505") {
