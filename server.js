@@ -366,7 +366,7 @@ app.post("/api/auth/cadastro", authLimiter, upload.single("foto"), async (req, r
         console.error("ERRO CADASTRO:", error);
 
         if (req.file) {
-            fs.unlink(req.file.path, () => {});
+            fs.unlink(req.file.path, () => { });
         }
 
         if (error.code === "23505") {
@@ -462,6 +462,23 @@ app.use((error, req, res, next) => {
 
     console.error("ERRO GLOBAL:", error);
     return res.status(500).json({ erro: "Erro interno no servidor." });
+});
+
+app.get("/teste-email", async (req, res) => {
+    try {
+        await transporter.verify();
+
+        res.json({
+            sucesso: true,
+            email: process.env.EMAIL_USER
+        });
+
+    } catch (error) {
+        res.status(500).json({
+            erro: error.message,
+            codigo: error.code || null
+        });
+    }
 });
 
 app.use((req, res) => {
