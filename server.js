@@ -42,10 +42,7 @@ app.use(helmet());
 
 app.use(cors({
     origin: (origin, callback) => {
-        if (
-            !origin ||
-            origin.startsWith("https://felipethanzin.github.io")
-        ) {
+        if (!origin || origin.startsWith("https://felipethanzin.github.io")) {
             callback(null, true);
         } else {
             callback(new Error("CORS não permitido"));
@@ -177,30 +174,17 @@ async function enviarEmailBrevo(email, codigo) {
                 name: "UltraNetX",
                 email: process.env.EMAIL_FROM
             },
-            to: [
-                {
-                    email
-                }
-            ],
+            to: [{ email }],
             subject: "Código de verificação - UltraNetX",
             htmlContent: `
                 <div style="font-family: Arial, sans-serif; background: #f4f7fb; padding: 30px;">
                     <div style="max-width: 500px; margin: auto; background: #ffffff; padding: 30px; border-radius: 12px; text-align: center;">
-                        <h2 style="color: #2563eb; margin-bottom: 10px;">UltraNetX</h2>
-
-                        <p style="color: #333;">Seu código de verificação é:</p>
-
+                        <h2 style="color: #2563eb;">UltraNetX</h2>
+                        <p>Seu código de verificação é:</p>
                         <div style="font-size: 36px; font-weight: bold; letter-spacing: 6px; color: #111827; margin: 25px 0;">
                             ${codigo}
                         </div>
-
-                        <p style="color: #555; font-size: 14px;">
-                            Esse código expira em 10 minutos.
-                        </p>
-
-                        <p style="color: #777; font-size: 12px; margin-top: 25px;">
-                            Se você não pediu esse código, ignore este e-mail.
-                        </p>
+                        <p>Esse código expira em 10 minutos.</p>
                     </div>
                 </div>
             `
@@ -252,26 +236,16 @@ app.post("/api/auth/enviar-codigo", authLimiter, async (req, res) => {
             return res.status(400).json({ erro: "E-mail inválido." });
         }
 
-const existe = await pool.query(
-    "SELECT email, nome FROM usuarios WHERE email = $1 OR nome = $2",
-    [email, nome]
-);
+        const existe = await pool.query(
+            "SELECT id FROM usuarios WHERE email = $1",
+            [email]
+        );
 
- if (existe.rows.length > 0) {
-    const usuarioExistente = existe.rows[0];
-
-    if (usuarioExistente.email === email) {
-        return res.status(409).json({
-            erro: "Este e-mail já está cadastrado."
-        });
-    }
-
-    if (usuarioExistente.nome === nome) {
-        return res.status(409).json({
-            erro: "Esse nome de usuário já está sendo usado por outra pessoa."
-        });
-    }
-}
+        if (existe.rows.length > 0) {
+            return res.status(409).json({
+                erro: "Este e-mail já está cadastrado."
+            });
+        }
 
         const codigo = crypto.randomInt(100000, 999999).toString();
 
@@ -287,7 +261,6 @@ const existe = await pool.query(
 
     } catch (error) {
         console.error("ERRO AO ENVIAR CÓDIGO:", error);
-
         return res.status(500).json({
             erro: error.message || "Erro interno ao enviar código."
         });
@@ -360,16 +333,34 @@ app.post("/api/auth/cadastro", authLimiter, upload.single("foto"), async (req, r
         }
 
         if (!idadeValida(nascimento)) {
-            return res.status(400).json({ erro: "Você precisa ter no mínimo 16 anos." });
+            return res.status(400).json({
+                erro: "Você precisa ter no mínimo 16 anos."
+            });
         }
 
         const existe = await pool.query(
-            "SELECT id FROM usuarios WHERE email = $1 OR nome = $2",
+            "SELECT email, nome FROM usuarios WHERE email = $1 OR nome = $2",
             [email, nome]
         );
 
         if (existe.rows.length > 0) {
-            return res.status(409).json({ erro: "E-mail ou nome já cadastrado." });
+            const usuarioExistente = existe.rows[0];
+
+            if (usuarioExistente.email === email) {
+                return res.status(409).json({
+                    erro: "Este e-mail já está cadastrado."
+                });
+            }
+
+            if (usuarioExistente.nome === nome) {
+                return res.status(409).json({
+                    erro: "Esse nome de usuário já está sendo usado por outra pessoa."
+                });
+            }
+
+            return res.status(409).json({
+                erro: "E-mail ou nome já cadastrado."
+            });
         }
 
         const senhaHash = await bcrypt.hash(senha, 12);
@@ -401,10 +392,14 @@ app.post("/api/auth/cadastro", authLimiter, upload.single("foto"), async (req, r
         }
 
         if (error.code === "23505") {
-            return res.status(409).json({ erro: "E-mail ou nome já cadastrado." });
+            return res.status(409).json({
+                erro: "E-mail ou nome de usuário já cadastrado."
+            });
         }
 
-        return res.status(500).json({ erro: "Erro interno ao cadastrar usuário." });
+        return res.status(500).json({
+            erro: "Erro interno ao cadastrar usuário."
+        });
     }
 });
 
@@ -486,6 +481,10 @@ app.use((error, req, res, next) => {
 
     if (error.message && error.message.includes("Formato inválido")) {
         return res.status(400).json({ erro: error.message });
+    }
+
+    if (error.message === "CORS não permitido") {
+        return res.status(403).json({ erro: "Origem não permitida pelo CORS." });
     }
 
     return res.status(500).json({ erro: "Erro interno no servidor." });
